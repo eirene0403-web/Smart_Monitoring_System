@@ -20,8 +20,8 @@
 #define BUTTON_ACTIVE_LEVEL  0
 /* This is the GPIO on which the power will be set */
 
-#define OUTPUT_GPIO_RED   8
-#define OUTPUT_FAN_SWITCH 2
+#define OUTPUT_GPIO_RED   4
+#define OUTPUT_FAN_SWITCH 8
 #define OUTPUT_GPIO_GREEN CONFIG_EXAMPLE_OUTPUT_GPIO_GREEN
 #define OUTPUT_GPIO_BLUE  CONFIG_EXAMPLE_OUTPUT_GPIO_BLUE
 
@@ -32,8 +32,8 @@ esp_err_t app_driver_set_gpio(const char *name, bool state)
 {
     if (strcmp(name, "Red") == 0) {
         gpio_set_level(OUTPUT_GPIO_RED, state);
-    } else if (strcmp(name, "Green") == 0) {
-        gpio_set_level(OUTPUT_GPIO_GREEN, state);
+    } else if (strcmp(name, "Fan") == 0) {
+        gpio_set_level(OUTPUT_FAN_SWITCH, state);
     } else if (strcmp(name, "Blue") == 0) {
         gpio_set_level(OUTPUT_GPIO_BLUE, state);
     } else {
@@ -54,7 +54,7 @@ void app_driver_init()
     };
     uint64_t pin_mask = (((uint64_t)1 << OUTPUT_GPIO_RED ) | ((uint64_t)1 << OUTPUT_FAN_SWITCH ));
     io_conf.pin_bit_mask = pin_mask;
-    /* Configure the GPIO */
+        /* Configure the GPIO */
     gpio_config(&io_conf);
     gpio_set_level(OUTPUT_GPIO_RED, false);
     gpio_set_level(OUTPUT_FAN_SWITCH, false);

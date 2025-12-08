@@ -30,6 +30,7 @@ float temperature = 0.0f; //global variable
 
 // ESP RainMaker parameter handles
 esp_rmaker_param_t *temperature_param;
+esp_rmaker_param_t *fan_switch;
 
 static const char *TAG = "app_main";
 
@@ -93,8 +94,8 @@ float read_temperature(){
        {
             if (adc_cali_raw_to_voltage(cali_handle, adc_raw, &voltage_mv) == ESP_OK)
             {
-                float temperature = (voltage_mv - MCP9700_OFFSET) / MCP9700_TC;  //convert V to temperature
-                return temperature;
+                float temp = (voltage_mv - MCP9700_OFFSET) / MCP9700_TC;  //convert V to temperature
+                return temp;
             }
             
        }
@@ -105,10 +106,14 @@ float read_temperature(){
 void temperature_reading_task(void* pvParameters){
     while(1){
         float temp=read_temperature();
-        ESP_LOGI(TAG, "Temperature: %.2f°C", temp);
+
+        temperature=temp;
+        ESP_LOGI(TAG, "Temperature: %.2f°C", temperature);
 
         // Update the ESP RainMaker device parameter
         esp_rmaker_param_update_and_report(temperature_param, esp_rmaker_float(temperature));
+
+        vTaskDelay(pdMS_TO_TICKS(10000)); // Update every 10 seconds
     }
 
 }
@@ -121,9 +126,26 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
     if (ctx) {
         ESP_LOGI(TAG, "Received write request via : %s", esp_rmaker_device_cb_src_to_str(ctx->src));
     }
-    if (app_driver_set_gpio(esp_rmaker_param_get_name(param), val.val.b) == ESP_OK) {
-        esp_rmaker_param_update(param, val);
+    // if (app_driver_set_gpio(esp_rmaker_param_get_name(param), val.val.b) == ESP_OK) {
+    //     esp_rmaker_param_update(param, val);
+    // }
+
+    // Handle devices by their name (e.g., "Red", "Fan")
+    const char *device_name = esp_rmaker_device_get_name(device);
+    if (strcmp(device_name, "Red") == 0) {
+        // Handle the "Red" device (e.g., set GPIO)
+        if (app_driver_set_gpio(device_name, val.val.b) == ESP_OK) {
+            esp_rmaker_param_update(param, val); // Update RainMaker parameter for Red
+        }
+    } else if (strcmp(device_name, "Fan") == 0) {
+        // Handle the "Fan" device (e.g., set GPIO)
+        if (app_driver_set_gpio(device_name, val.val.b) == ESP_OK) {
+            esp_rmaker_param_update(param, val); // Update RainMaker parameter for Fan
+        }
+    } else {
+        return ESP_FAIL;
     }
+
     return ESP_OK;
 }
 
@@ -246,7 +268,7 @@ void app_main()
     esp_rmaker_device_t *temperature_device = esp_rmaker_device_create("Temperature", ESP_RMAKER_DEVICE_TEMP_SENSOR, NULL);
     esp_rmaker_device_add_cb(temperature_device, write_cb, NULL);
 
-    esp_rmaker_param_t *temperature_param = esp_rmaker_param_create("Temperature", NULL, esp_rmaker_float(0), PROP_FLAG_READ | PROP_FLAG_PERSIST);
+    temperature_param = esp_rmaker_param_create("Temperature", NULL, esp_rmaker_float(0), PROP_FLAG_READ | PROP_FLAG_PERSIST);
     esp_rmaker_device_add_param(temperature_device, temperature_param);
     esp_rmaker_node_add_device(node, temperature_device);
 
@@ -255,9 +277,9 @@ void app_main()
     esp_rmaker_device_add_cb(fan_device, voice_control_cb, NULL); //voice control to on/off fan
     
     // Add the Standard POWER parameter (Required for Alexa)
-    esp_rmaker_param_t *pump_switch = esp_rmaker_power_param_create(ESP_RMAKER_DEF_POWER_NAME, false);
-    esp_rmaker_device_add_param(fan_device, pump_switch);
-    esp_rmaker_device_assign_primary_param(fan_device, pump_switch);
+    fan_switch = esp_rmaker_power_param_create(ESP_RMAKER_DEF_POWER_NAME, false);
+    esp_rmaker_device_add_param(fan_device, fan_switch);
+    esp_rmaker_device_assign_primary_param(fan_device, fan_switch);
     
     esp_rmaker_node_add_device(node, fan_device);
 
