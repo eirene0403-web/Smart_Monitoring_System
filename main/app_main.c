@@ -18,9 +18,21 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
+#include "freertos/event_groups.h"
+// #include "freertos/semaphore.h"
+#include "freertos/queue.h"
 
 #define MCP9700_OFFSET         500.0f          // 500 mV a 0°C
 #define MCP9700_TC             10.0f           // 10 mV/°C
+#define ADC_SAMPLES 1000  // Number of samples to average
+#define TEMPERATURE_THRESHOLD 35 //deg C
+#define BUTTON_ACTIVE_LEVEL 0 //when button pressed = 0
+#define OUTPUT_FAN_SWITCH 8
+#define OUTPUT_GPIO_RED   4
+#define DEBOUNCE_DELAY pdMS_TO_TICKS(100)
+
+#define HOT_TEMP_EVENT (1<<0)
+#define COMFORT_TEMP_EVENT (1<<1)
 
 adc_oneshot_unit_handle_t adc_handle = NULL;        
 adc_cali_handle_t cali_handle = NULL;
@@ -28,11 +40,25 @@ bool calibrated = false;
 int voltage_mv;
 float temperature = 0.0f; //global variable
 
+// Global handles for semaphores and queues
+SemaphoreHandle_t fanSemaphore;  // To control fan state
+QueueHandle_t temperatureQueue;  // To queue temperature values
+QueueHandle_t notification_queue;  // To queue temperature values
+EventGroupHandle_t temp_event_group;
+TaskHandle_t fanControlTaskHandle; // Task handle for fan control
+
 // ESP RainMaker parameter handles
 esp_rmaker_param_t *temperature_param;
+esp_rmaker_param_t *temp_state_param;
+esp_rmaker_param_t *temp_alert_param;
 esp_rmaker_param_t *fan_switch;
 
 static const char *TAG = "app_main";
+
+// Queue message structure
+typedef struct {
+    char message[64];
+} notification_msg_t;
 
 //ADC calibration
 static void adc_calibration(void)
@@ -86,13 +112,27 @@ static esp_err_t adc_oneshot_init(void)
 //Read voltage from ADC and convert to temperature
 float read_temperature(){
     int adc_raw;
+    long total = 0;
+
+    esp_err_t ret;
+
+    // Read multiple samples and average them
+    for (int i = 0; i < ADC_SAMPLES; i++) {
+        ret = adc_oneshot_read(adc_handle, ADC_CHANNEL_2, &adc_raw);
+        if (ret == ESP_OK) {
+            total += adc_raw;
+        }
+    }
+
+    int avg_adc = total / ADC_SAMPLES;  // Calculate the average ADC value
+    int voltage_mv;
   
-    esp_err_t ret = adc_oneshot_read(adc_handle, ADC_CHANNEL_2, &adc_raw);
+    // esp_err_t ret = adc_oneshot_read(adc_handle, ADC_CHANNEL_2, &adc_raw);
     if (ret == ESP_OK)
     {
        if(calibrated)
        {
-            if (adc_cali_raw_to_voltage(cali_handle, adc_raw, &voltage_mv) == ESP_OK)
+            if (adc_cali_raw_to_voltage(cali_handle, avg_adc, &voltage_mv) == ESP_OK)
             {
                 float temp = (voltage_mv - MCP9700_OFFSET) / MCP9700_TC;  //convert V to temperature
                 return temp;
@@ -101,6 +141,30 @@ float read_temperature(){
        }
     }
     return 0;
+}
+
+// Send unified push + UI notification via RainMaker
+void send_unified_notification(const char *message) {
+    esp_rmaker_param_update_and_report(temp_alert_param, esp_rmaker_str(message));
+    
+    esp_err_t err = esp_rmaker_raise_alert(message);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Notification sent and alert updated: %s", message);
+    } else {
+        ESP_LOGE(TAG, "Failed to send notification! Error: %d", err);
+    }
+}
+
+// Notification handler task (listens for messages on queue)
+void notification_task(void *arg) {
+    notification_msg_t received_msg;
+
+    while (1) {
+        if (xQueueReceive(notification_queue, &received_msg, portMAX_DELAY)) {
+            ESP_LOGI(TAG, "Processing notification: %s", received_msg.message);
+            send_unified_notification(received_msg.message);
+        }
+    }
 }
 
 void temperature_reading_task(void* pvParameters){
@@ -112,12 +176,76 @@ void temperature_reading_task(void* pvParameters){
 
         // Update the ESP RainMaker device parameter
         esp_rmaker_param_update_and_report(temperature_param, esp_rmaker_float(temperature));
+        
+        // // Send temperature to the queue for fan control task
+        // if(xQueueSend(temperatureQueue, &temp, 0) != pdTRUE){
+        //     ESP_LOGI(TAG, "Queue full, could not sent temp to fan task");
+        // };
+        
+        // Determine soil state and act accordingly
+        notification_msg_t msg;
+        const char* status;
+        
+        if (temperature > TEMPERATURE_THRESHOLD) {
+            status = "Hot";
+            snprintf(msg.message, sizeof(msg.message), "ALERT: It's Hot! Turn on the fan");
+            xEventGroupSetBits(temp_event_group, HOT_TEMP_EVENT);
 
-        vTaskDelay(pdMS_TO_TICKS(10000)); // Update every 10 seconds
+            if (fanControlTaskHandle != NULL) {
+                xTaskNotifyGive(fanControlTaskHandle); // Notify watering task
+            }
+        } 
+        else {
+            status = "OK";
+            snprintf(msg.message, sizeof(msg.message), "It's comfortable. Turn off the fan");
+            xEventGroupSetBits(temp_event_group, COMFORT_TEMP_EVENT);
+            if (fanControlTaskHandle != NULL) {
+                xTaskNotifyGive(fanControlTaskHandle); // Notify watering task
+            }
+        }
+
+        esp_rmaker_param_update_and_report(temp_state_param, esp_rmaker_str(status));
+
+        if (strcmp(status, "OK") == 0) {
+            esp_rmaker_param_update_and_report(temp_alert_param, esp_rmaker_str(msg.message));
+            ESP_LOGI(TAG, "Updated alert (UI only): %s", msg.message);
+        } else {
+            xQueueSend(notification_queue, &msg, portMAX_DELAY); // Send notification
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10000)); // Update every 2 seconds
     }
 
 }
 
+void fan_control_task(void* pvParameters) {
+    while(1) {
+        // Wait for the temperature value from the queue
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // Wait for signal
+        if(xSemaphoreTake(fanSemaphore, portMAX_DELAY)){
+            //Wait for HOT or COMFORT TEMP EVENT bit to be set in the event group
+            EventBits_t bits=xEventGroupWaitBits(temp_event_group, HOT_TEMP_EVENT | COMFORT_TEMP_EVENT, pdTRUE, pdFALSE, portMAX_DELAY);
+            if (bits & HOT_TEMP_EVENT) {
+                // Turn on the fan if temperature > threshold
+                ESP_LOGI(TAG, "Temperature exceeds %.2f°C, turning on fan", TEMPERATURE_THRESHOLD);
+                gpio_set_level(OUTPUT_FAN_SWITCH, 1); // Turn on fan
+            }
+            else if(bits & COMFORT_TEMP_EVENT){
+                // Turn off the fan if temperature <= threshold
+                ESP_LOGI(TAG, "Temperature is normal, turning off fan");
+                gpio_set_level(OUTPUT_FAN_SWITCH, 0); // Turn off fan
+            }
+            else{
+                //Do nothing, no event bits set
+                ESP_LOGI(TAG, "Do nothing, no event bits set");
+            }
+        
+            xSemaphoreGive(fanSemaphore);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Debounce delay
+    }   
+}
 
 /* Callback to handle commands received from the RainMaker cloud */
 static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_param_t *param,
@@ -126,18 +254,10 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
     if (ctx) {
         ESP_LOGI(TAG, "Received write request via : %s", esp_rmaker_device_cb_src_to_str(ctx->src));
     }
-    // if (app_driver_set_gpio(esp_rmaker_param_get_name(param), val.val.b) == ESP_OK) {
-    //     esp_rmaker_param_update(param, val);
-    // }
 
     // Handle devices by their name (e.g., "Red", "Fan")
     const char *device_name = esp_rmaker_device_get_name(device);
-    if (strcmp(device_name, "Red") == 0) {
-        // Handle the "Red" device (e.g., set GPIO)
-        if (app_driver_set_gpio(device_name, val.val.b) == ESP_OK) {
-            esp_rmaker_param_update(param, val); // Update RainMaker parameter for Red
-        }
-    } else if (strcmp(device_name, "Fan") == 0) {
+    if (strcmp(device_name, "Fan") == 0) {
         // Handle the "Fan" device (e.g., set GPIO)
         if (app_driver_set_gpio(device_name, val.val.b) == ESP_OK) {
             esp_rmaker_param_update(param, val); // Update RainMaker parameter for Fan
@@ -162,12 +282,21 @@ static esp_err_t voice_control_cb(const esp_rmaker_device_t *device, const esp_r
 
     //Only handle the standart "Power" command
     if (strcmp(param_name, ESP_RMAKER_DEF_POWER_NAME)==0){
-        ESP_LOGI(TAG, "Received value = %s for %s - %s", val.val.b ? "true":"false", device_name, param_name);
+        if (xSemaphoreTake(fanSemaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            ESP_LOGI(TAG, "Received value = %s for %s - %s", val.val.b ? "true":"false", device_name, param_name);
 
-        //Pass the device name to your driver (because the param is now always "Power")
-        if(app_driver_set_gpio(device_name, val.val.b)==ESP_OK){
-            esp_rmaker_param_update(param, val);
+            //Pass the device name to your driver (because the param is now always "Power")
+            if(app_driver_set_gpio(device_name, val.val.b)==ESP_OK){
+                esp_rmaker_param_update(param, val);
+            
+                // Prepare and send notification message
+                notification_msg_t msg;
+                snprintf(msg.message, sizeof(msg.message), "Fan is turned on manually");
+                xQueueSend(notification_queue, &msg, portMAX_DELAY);
+            }
+            xSemaphoreGive(fanSemaphore);
         }
+        
     }
     return ESP_OK;
 }
@@ -208,68 +337,18 @@ void app_main()
         abort();
     }
 
-    // /* Create a device and add the relevant parameters to it */
-    // esp_rmaker_device_t *gpio_device = esp_rmaker_device_create("GPIO-Device", NULL, NULL);
-    // esp_rmaker_device_add_cb(gpio_device, write_cb, NULL);
-
-    // esp_rmaker_param_t *red_param = esp_rmaker_param_create("Red", NULL, esp_rmaker_bool(false), PROP_FLAG_READ | PROP_FLAG_WRITE);
-    // esp_rmaker_param_add_ui_type(red_param, ESP_RMAKER_UI_TOGGLE);
-    // esp_rmaker_device_add_param(gpio_device, red_param);
-
-    // esp_rmaker_param_t *green_param = esp_rmaker_param_create("Green", NULL, esp_rmaker_bool(false), PROP_FLAG_READ | PROP_FLAG_WRITE);
-    // esp_rmaker_param_add_ui_type(green_param, ESP_RMAKER_UI_TOGGLE);
-    // esp_rmaker_device_add_param(gpio_device, green_param);
-
-    // esp_rmaker_param_t *blue_param = esp_rmaker_param_create("Blue", NULL, esp_rmaker_bool(false), PROP_FLAG_READ | PROP_FLAG_WRITE);
-    // esp_rmaker_param_add_ui_type(blue_param, ESP_RMAKER_UI_TOGGLE);
-    // esp_rmaker_device_add_param(gpio_device, blue_param);
-
-    // esp_rmaker_node_add_device(node, gpio_device);
-
-    // -----------------------------------------------------------
-    // DEVICE 1: RED
-    // We create a standard SWITCH device named "Red"
-    // -----------------------------------------------------------
-    esp_rmaker_device_t *red_device = esp_rmaker_device_create("Red", ESP_RMAKER_DEVICE_SWITCH, NULL);
-    esp_rmaker_device_add_cb(red_device, write_cb, NULL);
-    
-    // Add the Standard POWER parameter (Required for Alexa)
-    esp_rmaker_param_t *red_power = esp_rmaker_power_param_create(ESP_RMAKER_DEF_POWER_NAME, false);
-    esp_rmaker_device_add_param(red_device, red_power);
-    esp_rmaker_device_assign_primary_param(red_device, red_power);
-    
-    esp_rmaker_node_add_device(node, red_device);
-
-    // // -----------------------------------------------------------
-    // // DEVICE 2: GREEN
-    // // -----------------------------------------------------------
-    // esp_rmaker_device_t *green_device = esp_rmaker_device_create("Green", ESP_RMAKER_DEVICE_SWITCH, NULL);
-    // esp_rmaker_device_add_cb(green_device, write_cb, NULL);
-    
-    // esp_rmaker_param_t *green_power = esp_rmaker_power_param_create(ESP_RMAKER_DEF_POWER_NAME, false);
-    // esp_rmaker_device_add_param(green_device, green_power);
-    // esp_rmaker_device_assign_primary_param(green_device, green_power);
-    
-    // esp_rmaker_node_add_device(node, green_device);
-
-    // // -----------------------------------------------------------
-    // // DEVICE 3: BLUE
-    // // -----------------------------------------------------------
-    // esp_rmaker_device_t *blue_device = esp_rmaker_device_create("Blue", ESP_RMAKER_DEVICE_SWITCH, NULL);
-    // esp_rmaker_device_add_cb(blue_device, write_cb, NULL);
-    
-    // esp_rmaker_param_t *blue_power = esp_rmaker_power_param_create(ESP_RMAKER_DEF_POWER_NAME, false);
-    // esp_rmaker_device_add_param(blue_device, blue_power);
-    // esp_rmaker_device_assign_primary_param(blue_device, blue_power);
-    
-    // esp_rmaker_node_add_device(node, blue_device);
-
     //Create MCP9700 device and add the relevant parameters to it
     esp_rmaker_device_t *temperature_device = esp_rmaker_device_create("Temperature", ESP_RMAKER_DEVICE_TEMP_SENSOR, NULL);
     esp_rmaker_device_add_cb(temperature_device, write_cb, NULL);
 
     temperature_param = esp_rmaker_param_create("Temperature", NULL, esp_rmaker_float(0), PROP_FLAG_READ | PROP_FLAG_PERSIST);
+    temp_state_param = esp_rmaker_param_create("Temperature Status", NULL, esp_rmaker_str("OK"), PROP_FLAG_READ | PROP_FLAG_PERSIST);
+    temp_alert_param = esp_rmaker_param_create("Alert", NULL, esp_rmaker_str("No Alerts"), PROP_FLAG_READ | PROP_FLAG_PERSIST);
+
     esp_rmaker_device_add_param(temperature_device, temperature_param);
+    esp_rmaker_device_add_param(temperature_device, temp_state_param);
+    esp_rmaker_device_add_param(temperature_device, temp_alert_param);
+
     esp_rmaker_node_add_device(node, temperature_device);
 
     //Fan switch
@@ -304,6 +383,14 @@ void app_main()
         abort();
     }
 
+    // Create semaphores and queues
+    fanSemaphore = xSemaphoreCreateBinary();
+    xSemaphoreGive(fanSemaphore);
+    notification_queue = xQueueCreate(5, sizeof(notification_msg_t));
+    temp_event_group = xEventGroupCreate();
+
     //Create Task
     xTaskCreate(temperature_reading_task, "temperature_reading", 4096, NULL, 2, NULL); //High prio, to run first
+    xTaskCreate(fan_control_task, "fan control task", 4096, NULL, 2, &fanControlTaskHandle); //High prio, to run first
+    xTaskCreate(notification_task, "notification_task", 4096, NULL, 2, NULL);
 }
