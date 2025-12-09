@@ -14,6 +14,12 @@
 # EXTERNAL cache entries
 ########################
 
+//No help, variable specified on the command line.
+CCACHE_ENABLE:UNINITIALIZED=1
+
+//Path to a program.
+CCACHE_FOUND:FILEPATH=C:/Users/User/.espressif/tools/ccache/4.11.2/ccache-4.11.2-windows-x86_64/ccache.exe
+
 //Path to a program.
 CMAKE_ADDR2LINE:FILEPATH=C:/Users/User/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/bin/riscv32-esp-elf-addr2line.exe
 
@@ -154,7 +160,7 @@ CMAKE_INSTALL_MANDIR:PATH=
 CMAKE_INSTALL_OLDINCLUDEDIR:PATH=/usr/include
 
 //Install path prefix, prepended onto install directories.
-CMAKE_INSTALL_PREFIX:PATH=C:/Program Files (x86)/gpio
+CMAKE_INSTALL_PREFIX:PATH=C:/Program Files (x86)/TempDevice
 
 //Run-time variable data (LOCALSTATEDIR/run)
 CMAKE_INSTALL_RUNSTATEDIR:PATH=
@@ -210,7 +216,7 @@ CMAKE_PROJECT_DESCRIPTION:STATIC=
 CMAKE_PROJECT_HOMEPAGE_URL:STATIC=
 
 //Value Computed by CMake
-CMAKE_PROJECT_NAME:STATIC=gpio
+CMAKE_PROJECT_NAME:STATIC=TempDevice
 
 //Value Computed by CMake
 CMAKE_PROJECT_VERSION:STATIC=3.6.4
@@ -347,10 +353,22 @@ Mbed TLS_IS_TOP_LEVEL:STATIC=OFF
 Mbed TLS_SOURCE_DIR:STATIC=C:/Users/User/esp/v5.5.1/esp-idf/components/mbedtls/mbedtls
 
 //No help, variable specified on the command line.
+PYTHON:UNINITIALIZED=C:\Users\User\.espressif\python_env\idf5.5_py3.11_env\Scripts\python.exe
+
+//No help, variable specified on the command line.
 PYTHON_DEPS_CHECKED:UNINITIALIZED=1
 
 //No help, variable specified on the command line.
 SDKCONFIG:UNINITIALIZED=c:\Users\User\gpio\sdkconfig
+
+//Value Computed by CMake
+TempDevice_BINARY_DIR:STATIC=C:/Users/User/gpio/build
+
+//Value Computed by CMake
+TempDevice_IS_TOP_LEVEL:STATIC=ON
+
+//Value Computed by CMake
+TempDevice_SOURCE_DIR:STATIC=C:/Users/User/gpio
 
 //Allow unsafe builds. These builds ARE NOT SECURE.
 UNSAFE_BUILD:BOOL=OFF
@@ -372,15 +390,6 @@ esp-idf_SOURCE_DIR:STATIC=C:/Users/User/esp/v5.5.1/esp-idf
 
 //Dependencies for the target
 everest_LIB_DEPENDS:STATIC=general;__idf_cxx;general;__idf_newlib;general;__idf_freertos;general;__idf_esp_hw_support;general;__idf_heap;general;__idf_log;general;__idf_soc;general;__idf_hal;general;__idf_esp_rom;general;__idf_esp_common;general;__idf_esp_system;general;__idf_riscv;
-
-//Value Computed by CMake
-gpio_BINARY_DIR:STATIC=C:/Users/User/gpio/build
-
-//Value Computed by CMake
-gpio_IS_TOP_LEVEL:STATIC=ON
-
-//Value Computed by CMake
-gpio_SOURCE_DIR:STATIC=C:/Users/User/gpio
 
 //Dependencies for the target
 mbedcrypto_LIB_DEPENDS:STATIC=general;__idf_cxx;general;__idf_newlib;general;__idf_freertos;general;__idf_esp_hw_support;general;__idf_heap;general;__idf_log;general;__idf_soc;general;__idf_hal;general;__idf_esp_rom;general;__idf_esp_common;general;__idf_esp_system;general;__idf_riscv;general;everest;general;p256m;general;idf::esp_security;general;idf::esp_mm;
@@ -596,7 +605,7 @@ FIND_PACKAGE_MESSAGE_DETAILS_Threads:INTERNAL=[TRUE][v()]
 //ADVANCED property for variable: GIT_EXECUTABLE
 GIT_EXECUTABLE-ADVANCED:INTERNAL=1
 //CMAKE_INSTALL_PREFIX during last run
-_GNUInstallDirs_LAST_CMAKE_INSTALL_PREFIX:INTERNAL=C:/Program Files (x86)/gpio
+_GNUInstallDirs_LAST_CMAKE_INSTALL_PREFIX:INTERNAL=C:/Program Files (x86)/TempDevice
 //Compiler reason failure
 _Python3_Compiler_REASON_FAILURE:INTERNAL=
 //Development reason failure

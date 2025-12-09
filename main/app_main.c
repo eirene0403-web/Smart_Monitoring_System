@@ -55,6 +55,8 @@ esp_rmaker_param_t *fan_switch;
 
 static const char *TAG = "app_main";
 
+bool manual_mode = false;
+
 // Queue message structure
 typedef struct {
     char message[64];
@@ -176,13 +178,8 @@ void temperature_reading_task(void* pvParameters){
 
         // Update the ESP RainMaker device parameter
         esp_rmaker_param_update_and_report(temperature_param, esp_rmaker_float(temperature));
-        
-        // // Send temperature to the queue for fan control task
-        // if(xQueueSend(temperatureQueue, &temp, 0) != pdTRUE){
-        //     ESP_LOGI(TAG, "Queue full, could not sent temp to fan task");
-        // };
-        
-        // Determine soil state and act accordingly
+    
+        // Determine temperature state and act accordingly
         notification_msg_t msg;
         const char* status;
         
@@ -223,23 +220,24 @@ void fan_control_task(void* pvParameters) {
         // Wait for the temperature value from the queue
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // Wait for signal
         if(xSemaphoreTake(fanSemaphore, portMAX_DELAY)){
-            //Wait for HOT or COMFORT TEMP EVENT bit to be set in the event group
-            EventBits_t bits=xEventGroupWaitBits(temp_event_group, HOT_TEMP_EVENT | COMFORT_TEMP_EVENT, pdTRUE, pdFALSE, portMAX_DELAY);
-            if (bits & HOT_TEMP_EVENT) {
-                // Turn on the fan if temperature > threshold
-                ESP_LOGI(TAG, "Temperature exceeds %.2f°C, turning on fan", TEMPERATURE_THRESHOLD);
-                gpio_set_level(OUTPUT_FAN_SWITCH, 1); // Turn on fan
+            if(manual_mode == false){
+                //Wait for HOT or COMFORT TEMP EVENT bit to be set in the event group
+                EventBits_t bits=xEventGroupWaitBits(temp_event_group, HOT_TEMP_EVENT | COMFORT_TEMP_EVENT, pdTRUE, pdFALSE, portMAX_DELAY);
+                if (bits & HOT_TEMP_EVENT) {
+                    // Turn on the fan if temperature > threshold
+                    ESP_LOGI(TAG, "Temperature exceeds %.2f°C, turning on fan", TEMPERATURE_THRESHOLD);
+                    gpio_set_level(OUTPUT_FAN_SWITCH, 1); // Turn on fan
+                }
+                else if(bits & COMFORT_TEMP_EVENT){
+                    // Turn off the fan if temperature <= threshold
+                    ESP_LOGI(TAG, "Temperature is normal, turning off fan");
+                    gpio_set_level(OUTPUT_FAN_SWITCH, 0); // Turn off fan
+                }
+                else{
+                    //Do nothing, no event bits set
+                    ESP_LOGI(TAG, "Do nothing, no event bits set");
+                }
             }
-            else if(bits & COMFORT_TEMP_EVENT){
-                // Turn off the fan if temperature <= threshold
-                ESP_LOGI(TAG, "Temperature is normal, turning off fan");
-                gpio_set_level(OUTPUT_FAN_SWITCH, 0); // Turn off fan
-            }
-            else{
-                //Do nothing, no event bits set
-                ESP_LOGI(TAG, "Do nothing, no event bits set");
-            }
-        
             xSemaphoreGive(fanSemaphore);
         }
 
@@ -277,11 +275,12 @@ static esp_err_t voice_control_cb(const esp_rmaker_device_t *device, const esp_r
         ESP_LOGI(TAG, "Received write request via : %s", esp_rmaker_device_cb_src_to_str(ctx->src));
     }
 
-    const char *device_name= esp_rmaker_device_get_name(device);
-    const char *param_name= esp_rmaker_param_get_name(param);
+    const char *device_name=esp_rmaker_device_get_name(device);
+    const char *param_name=esp_rmaker_param_get_name(param);
 
     //Only handle the standart "Power" command
     if (strcmp(param_name, ESP_RMAKER_DEF_POWER_NAME)==0){
+        manual_mode=true;
         if (xSemaphoreTake(fanSemaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
             ESP_LOGI(TAG, "Received value = %s for %s - %s", val.val.b ? "true":"false", device_name, param_name);
 
@@ -330,7 +329,7 @@ void app_main()
     esp_rmaker_config_t rainmaker_cfg = {
         .enable_time_sync = false,
     };
-    esp_rmaker_node_t *node = esp_rmaker_node_init(&rainmaker_cfg, "ESP RainMaker Device", "GPIO-Device");
+    esp_rmaker_node_t *node = esp_rmaker_node_init(&rainmaker_cfg, "ESP RainMaker Device", "SmartDevice");
     if (!node) {
         ESP_LOGE(TAG, "Could not initialise node. Aborting!!!");
         vTaskDelay(5000/portTICK_PERIOD_MS);
