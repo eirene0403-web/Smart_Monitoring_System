@@ -1,18 +1,20 @@
-# GPIO Example
+# Smart Temperature Monitor
+An automated fan control system using ESP32-C3 and ESP RainMaker to monitor the temperature and turn on/off the fan based on the thresholds. This system can be controlled via app or voice assitant too!
 
-## Build and Flash firmware
+## Objectives
 
-Follow the ESP RainMaker Documentation [Get Started](https://rainmaker.espressif.com/docs/get-started.html) section to build and flash this firmware. Just note the path of this example.
+- To develop temperature monitoring system using MCP9700 and automated fan controlling system based on programmable temperature thresholds
+- To enable remote monitoring and control using Wi-Fi provisioning by ESP RainMaker platform
+- To implement voice assitant integration using Amazon Alexa for hands-free operation of the fan
+- To implement inter-task communication and synchronization using Event Groups, Semaphores and Queues
+- To implement Over-the-Air (OTA) firmware updates for bug fixes, patches, new features without the physical access to the microcontroller.
 
-## What to expect in this example?
+## Components used
 
-- This example just provides 3 boolean parameters, linked to 3 GPIOS.
-- Toggling the buttons on the phone app should toggle the GPIOs on your board (and the LEDs, if any, connected to the GPIOs), and also print messages like these on the ESP32-S2 monitor:
-
-```
-I (16073) app_main: Received value = true for GPIO-Device - Red
-```
-
-### Reset to Factory
-
-Press and hold the BOOT button for more than 3 seconds to reset the board to factory defaults. You will have to provision the board again to use it.
+- Seeed Studio XIAO ESP32C3
+- MCP9700 Linear Temperature Sensor
+- 130 DC Motor
+- 2 Channel 5V Active Low Relay Module
+- AAA Alkaline Battery
+- 104 Ceramic Capacitor
+- Propeller
