@@ -8,6 +8,6 @@ else()
   set(RMAKER_PATH ${CMAKE_CURRENT_LIST_DIR}/../..)
 endif(DEFINED ENV{RMAKER_PATH})
 
-set(PROJECT_VER "1.0")
+set(PROJECT_VER "1.0.2")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(gpio)
+project(TempDevice)

@@ -27,4 +27,4 @@ set confirm off
 set confirm on
 
 # Load application symbols
-file C:/Users/User/gpio/build/gpio.elf
+file C:/Users/User/gpio/build/TempDevice.elf

@@ -10,7 +10,7 @@ C:/Users/User/gpio/build/CMakeFiles/monitor.dir
 C:/Users/User/gpio/build/CMakeFiles/flash.dir
 C:/Users/User/gpio/build/CMakeFiles/encrypted-flash.dir
 C:/Users/User/gpio/build/CMakeFiles/_project_elf_src.dir
-C:/Users/User/gpio/build/CMakeFiles/gpio.elf.dir
+C:/Users/User/gpio/build/CMakeFiles/TempDevice.elf.dir
 C:/Users/User/gpio/build/CMakeFiles/size.dir
 C:/Users/User/gpio/build/CMakeFiles/size-files.dir
 C:/Users/User/gpio/build/CMakeFiles/size-components.dir
